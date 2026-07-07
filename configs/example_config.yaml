@@ -1,0 +1,238 @@
+# PDAC longitudinal framework example configuration.
+# Copy this file, adjust the paths, and run:
+#
+# pdac_longitudinal preprocess --config configs/my_config.yaml
+# pdac_longitudinal train      --config configs/my_config.yaml --cv-fold 0
+
+# Data
+data:
+  nifti_dir:    /path/to/composer_output
+  labels_csv:   data/labels.csv
+  cache_dir:    /path/to/train_cache
+  segmenter_weights_path: weights/nnunet_resencl_pdac.pth
+  splits_file:  data/splits.json
+
+  # Restrict to these cohorts; empty = all. Matched case-insensitively.
+  include_cohorts: [cohort_a, cohort_b]
+  clinical_completeness_weighting: false
+  clinical_missingness_flags: false
+  exclude_cases: [PAT-001]
+  # Bump when preprocessing logic changes so old caches are ignored.
+  cache_version: v3.19
+
+  # phase is a preference order: each patient uses the first phase with a
+  # valid T0+T1 pair.
+  phase:           [arterial, venous]
+  allowed_regions: [abdomen_high_conf, abdomen, abdomen_partial]
+  post_nat_tps:    [t1]
+
+
+# ROI pipeline, peritumoural rings + tumour-vessel interface masks
+roi_pipeline:
+  ring_radii_mm: [0.0, 5.0, 10.0, 15.0]
+  tvi_tumour_mm: 10.0
+  tvi_vessel_mm: 10.0
+  segment_t1: false
+  save_segmentations: true
+  skip_existing: true
+  segmenter:
+    device: null
+    tile_step_size: 0.5
+    use_gaussian: true
+    use_mirroring: false
+
+
+# Preprocessing
+preprocessing:
+  ct_clip_min: -100.0
+  ct_clip_max:  240.0
+  ct_norm_mean: null
+  ct_norm_std:  null
+  target_spacing: [1.5, 1.5, 1.5]
+  patch_size: [160, 160, 160]
+  crop_to_foreground: true
+  foreground_margin_voxels: 60
+  shared_crop_frame: true
+  reuse_saved_segs: true
+  viz_cache_every: 5
+  # PanTS inference geometry, from the checkpoint plans; used only to estimate
+  # tile count and peak RAM before segmentation.
+  pants_target_spacing_zyx: [1.0, 0.787, 0.801]
+  pants_patch_zyx: [128, 192, 288]
+  pants_step: 0.5
+
+
+# Augmentation, training-time, magnitudes in z-score units
+augmentation:
+  flip_x_prob: 0.5
+  intensity_prob: 0.7
+  noise_sigma: 0.05
+  brightness_bias: 0.10
+  spatial_prob: 0.0
+  axial_deg: 25.0
+  tilt_deg: 7.0
+  scale_range: [0.9, 1.1]
+  elastic_prob: 0.0
+  elastic_voxels: 3.0
+  elastic_sigma: 12.0
+  mult_bright_prob: 0.0
+  mult_bright_range: [0.85, 1.15]
+  contrast_prob: 0.0
+  contrast_range: [0.75, 1.25]
+  blur_prob: 0.0
+  blur_sigma: [0.5, 1.25]
+  lowres_prob: 0.0
+  lowres_range: [0.5, 1.0]
+
+
+# Registration, optional deformable T1->T0 alignment during preprocess
+registration:
+  use_deformable_registration: false
+  iterations: 100
+  lr: 0.001
+  device: null
+  localnet:
+    num_channel_initial: 16
+    extract_levels: [0, 1, 2, 3]
+    lncc_kernel_size: 9
+    reg_weight: 1.0
+
+
+# Encoder, frozen PanTS nnU-Net ResEnc-L backbone
+encoder:
+  weights_path: weights/nnunet_resencl_pdac.pth
+  input_channels: 1
+  num_classes: 19
+  freeze_on_init: true
+  arch_kwargs:
+    n_stages: 6
+    features_per_stage: [32, 64, 128, 256, 320, 320]
+    conv_op: torch.nn.modules.conv.Conv3d
+    kernel_sizes: [[3, 3, 3], [3, 3, 3], [3, 3, 3], [3, 3, 3], [3, 3, 3], [3, 3, 3]]
+    strides:      [[1, 1, 1], [2, 2, 2], [2, 2, 2], [2, 2, 2], [2, 2, 2], [2, 2, 2]]
+    n_blocks_per_stage: [1, 3, 4, 6, 6, 6]
+    n_conv_per_stage_decoder: [1, 1, 1, 1, 1]
+    conv_bias: true
+    norm_op: torch.nn.modules.instancenorm.InstanceNorm3d
+    norm_op_kwargs: {eps: 1.0e-5, affine: true}
+    dropout_op: null
+    dropout_op_kwargs: null
+    nonlin: torch.nn.LeakyReLU
+    nonlin_kwargs: {inplace: true}
+
+
+# Cross-timepoint attention
+attention:
+  # Window sizes divide each stage's feature map evenly.
+  window_sizes: [[8, 8, 8], [5, 5, 5], [4, 4, 4], [4, 4, 4], [5, 5, 5], [5, 5, 5]]
+  num_heads_per_stage: [null, null, null, null, null, null]
+  dropout: 0.2
+  use_gradient_checkpointing: true
+  pass_through_stages: [0, 1]
+
+
+# Radiomics, PyRadiomics features per compartment
+radiomics:
+  settings_file: null
+  bin_width: 25.0
+  sigma_values: []
+  resegment_range: null
+  feature_classes: [firstorder, shape, glcm, glrlm, glszm, ngtdm, gldm]
+  compartments: [IT, PT_ring1, PT_ring2, PT_ring3, TVI]
+
+
+# Fusion head
+fusion:
+  radiomic_embed_dim: 64
+  num_fusion_layers: 2
+  num_classes: 2
+  dropout: 0.3
+  # ROI-pooled deep tokens: masked mean+std per compartment at a shallow and
+  # the deepest stage, instead of one global average pool.
+  roi_pool_regions: [tumour, peritumoural, tvi, liver]
+  roi_pool_stages: [0, -1]
+
+
+# Modules, which input tokens the fusion head receives
+modules:
+  imaging:   true
+  clinical:  true
+  anatomy:   false
+  vessel:    false
+  radiomics: false
+
+
+# Experiment tracking
+wandb:
+  enabled: false
+  project: pdac-longitudinal
+  entity: null
+  mode: online
+  run_name: example-run
+  dir: null
+  tags: {}
+
+
+# Training
+training:
+  amp_dtype: bfloat16
+  use_amp: true
+  # survival = Cox PH loss + C-index. binary = BCE past survival_horizon_months + AUC.
+  task: survival
+  survival_horizon_months: 12.0
+  binary_pos_weight: auto
+
+  # Inline clinical-only baseline, lifelines CoxPH on the same fold.
+  clinical_baseline_enabled: true
+  clinical_baseline_results: null
+
+  attn_guidance_enabled: true
+  attn_guidance_coef: 0.1
+  attn_guidance_stage: [2, -1]
+  attn_guidance_roi: [tumour, peritumoural, tvi, liver]
+  attn_guidance_roi_weights: [1.0, 0.5, 0.5, 0.4]
+
+  # GRL: pushes the fusion embedding to be phase-uninformative.
+  phase_adversarial_enabled: true
+  phase_adv_coef: 0.01
+
+  output_dir: outputs
+  num_epochs: 60
+  batch_size: 12
+  optimizer: adamw
+  learning_rate: 1.0e-4
+  weight_decay: 1.0e-3
+  scheduler: cosine
+  warmup_epochs: 5
+
+  # 0 keeps the encoder frozen for the whole run. Above 0 unfreezes at that
+  # epoch, with the encoder entering at 10x lower LR than the head.
+  unfreeze_encoder_at_epoch: 10
+  unfreeze_encoder_stages: [3, 4, 5]
+
+  save_every_n_epochs: 10
+  early_stopping_patience: 20
+  seed: 42
+  num_workers: 4
+  device: null
+  attention_viz_every: 10
+  attention_viz_cases: 4
+  attention_viz_case_ids: null
+  max_seg_tiles: 300
+  max_cases: null
+
+
+# Cross-validation, disabled by default; --cv-fold N enables it
+cv:
+  enabled: false
+  n_folds: 5
+  fold: null
+  seed: 42
+
+
+# Analyze / evaluate options
+analysis:
+  shap: false
+  on_test: false
+  perm_through_pca: false
+  tta: false

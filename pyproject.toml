@@ -1,0 +1,63 @@
+[project]
+name = "pdac-longitudinal-framework"
+description = "Longitudinal CT survival-prediction framework for pancreatic ductal adenocarcinoma (PDAC) using a multimodal approach."
+version = "0.3.19"
+authors = [
+    { name = "Boris de Wildt", email = "b.de.wildt@student.vu.nl" }]
+license = { file = "LICENSE" }
+requires-python = ">=3.11"
+dependencies = [
+    "dataset-composer",
+    "lifelines>=0.30.3",
+    "matplotlib>=3.10.8",
+    "monai>=1.5.2",
+    "nibabel>=5.0",
+    "nnunetv2>=2.7.0",
+    "numpy>=1.24",
+    "openpyxl>=3.1.5",
+    "pandas>=2.1",
+    "pyarrow>=24.0.0",
+    "pyyaml>=6.0",
+    "scipy>=1.7",
+    "scipy-stubs~=1.17.1",
+    "SimpleITK>=2.2.1",
+    "torch>=2.11.0",
+    "wandb>=0.27.2",
+    "polars>=1.41.1",
+    "captum>=0.9.0",
+    "shap>=0.51.0",
+    "scikit-learn>=1.5",
+    "umap-learn>=0.5.12",
+]
+
+[project.scripts]
+pdac_longitudinal = "pdac_longitudinal.cli.__main__:main"
+
+[project.optional-dependencies]
+radiomics = [
+    "pyradiomics",
+]
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["pdac_longitudinal*"]
+
+[tool.uv.sources]
+dataset-composer = { git = "https://github.com/bwildt-dev/dataset-composer.git", tag = "v0.1.0" }
+torch        = [{ index = "pytorch-cu128", marker = "sys_platform == 'linux'" }]
+pyradiomics = { git = "https://github.com/AIM-Harvard/pyradiomics", rev = "v3.1.0" }
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
